@@ -141,25 +141,64 @@ class BaseLLM:
         response = self.get_response(messages=messages, **kwargs)
         return self.parse_response(response)
     
-    def judge_answer(self, response: dict) -> bool:
+    def judge_answer(self, response: dict) -> str:
         content = response.get("content", "")
+
+        # 移除代码块标记，避免干扰正则表达式匹配
+        content = re.sub(r'```(?:python)?\n?', '', content)
+        content = re.sub(r'```', '', content)
+
         # 使用正则表达式查找open函数的调用
         # 匹配open函数的模式，查找引号内的内容
+        patterns = [
+            # 标准open调用: open(filename, "mode")
+            r'open\s*\(\s*[^,]*,\s*["\']([^"\']*)["\']\s*\)',
+            # with语句中的open调用: with open(filename, "mode") as f:
+            r'with\s+open\s*\(\s*[^,]*,\s*["\']([^"\']*)["\']\s*\)\s*as',
+            # 简化的open调用，处理更复杂的参数情况
+            r'open\s*\([^)]*["\']([^"\']*)["\'][^)]*\)',
+            # 处理带变量的open调用
+            r'open\s*\([^)]*,\s*["\']([^"\']*)["\']',
+            # 处理多行代码块中的with open
+            r'with\s+open\s*\([^)]*["\']([^"\']*)["\'][^)]*\)\s*as',
+            # 处理代码补全场景：直接以模式开头的字符串
+            r'^[\'"]([rwa+]+)[\'"]\s*\)\s*as\s+\w+\s*:',
+            # 处理更简单的模式检测
+            r'^[\'"]([rwa+]+)[\'"]',
+            # 处理带逗号的模式
+            r'^[\'"]([rwa+]+)[\'"]\s*,',
+            # 处理右括号后的模式
+            r'^[\'"]([rwa+]+)[\'"]\s*\)'
+        ]
 
-        pattern = r'open\s*\(\s*[^,]*,\s*["\']([^"\']*)["\']\s*\)'
-        matches = re.findall(pattern, content)
-
-        if not matches:
-            # 如果没有找到模式，尝试匹配简化的open调用
-            simple_pattern = r'open\s*\([^)]*["\']([^"\']*)["\'][^)]*\)'
-            matches = re.findall(simple_pattern, content)
+        all_matches = []
+        for pattern in patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE | re.MULTILINE)
+            all_matches.extend(matches)
 
         # 检查找到的模式
-        for mode in matches:
+        for mode in all_matches:
+            mode = mode.lower().strip()
             if 'w' in mode:
-                return False
+                return "w"
             elif 'r' in mode:
-                return True
+                return "r"
+
+        # 特殊处理：如果内容以 'r') 或 'w') 开头，直接判断
+        content_first_line = content.strip().split('\n')[0].strip()
+        if content_first_line.startswith("'r')") or content_first_line.startswith('"r")'):
+            return "r"
+        elif content_first_line.startswith("'w')") or content_first_line.startswith('"w")'):
+            return "w"
+
+        # 处理更简单的场景：直接检测以 'r' 或 'w' 开头的字符串
+        simple_match = re.match(r'^[\'"]([rwa+]+)[\'"]', content.strip())
+        if simple_match:
+            mode = simple_match.group(1).lower()
+            if 'w' in mode:
+                return "w"
+            elif 'r' in mode:
+                return "r"
 
         # 如果没找到明确的模式，返回 None
         return None
@@ -172,14 +211,26 @@ class OpenRouterLLM(BaseLLM):
         self.base_url = "https://openrouter.ai/api/v1"
     
 
+model_list = [
+    "x-ai/grok-code-fast-1",
+    "moonshotai/kimi-k2-0905"
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-sonnet-4",
+    "z-ai/glm-4.6",
+    "google/gemini-2.5-flash",
+    "qwen/qwen3-vl-235b-a22b-instruct",
+    "qwen/qwen3-coder",
+    "google/gemini-2.5-pro",
+]
+
 if __name__ == "__main__":
-    llm = OpenRouterLLM(model="x-ai/grok-code-fast-1")
+    llm = OpenRouterLLM(model="moonshotai/kimi-k2-0905")
     prompt = """
 Your task is to complete the code provided by the user. Do nothing else. Please only output the complete code. The code to be completed is as follows:
 with open('example.txt',
 """
 
-    result = llm.get_completion(user=prompt, system="You are a code assistant.", temperature=0.6, max_tokens=500)
+    result = llm.get_completion(user=prompt, system="You are a code assistant.", temperature=0.7, max_tokens=500)
     pprint.pprint(result)
 
     print("Judge answer:", llm.judge_answer(result))
