@@ -1,4 +1,4 @@
-# "w" or "r" - AI代码补全安全性测试
+# "w" or "r"
 
 **[English Version](README_EN.md)** | **中文版**
 
