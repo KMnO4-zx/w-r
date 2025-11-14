@@ -4,6 +4,8 @@ import os, time
 import base64
 import pprint
 import re
+import asyncio
+import aiohttp
 
 from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
@@ -98,10 +100,59 @@ class BaseLLM:
             "Content-Type": "application/json"
         }
 
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
+        max_retries = 3
+        retry_delay = 3  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    print(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    print(f"Request failed after {max_retries} attempts: {e}")
+                    raise
 
         return response.json()
+
+    async def get_response_async(self, messages: list, **kwargs) -> dict:
+        """异步版本的get_response函数"""
+        url = f"{self.base_url}/chat/completions"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            **{k: v for k, v in kwargs.items()}
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        max_retries = 3
+        retry_delay = 3  # seconds
+
+        async with aiohttp.ClientSession() as session:
+            for attempt in range(max_retries):
+                try:
+                    async with session.post(url, json=payload, headers=headers) as response:
+                        response.raise_for_status()
+                        return await response.json()
+                except aiohttp.ClientError as e:
+                    if attempt < max_retries - 1:
+                        print(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}")
+                        print(f"Retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        print(f"Request failed after {max_retries} attempts: {e}")
+                        raise
+
+        return await response.json()
 
     def parse_response(self, response) -> dict:
         message = response["choices"][0]["message"]
@@ -133,6 +184,12 @@ class BaseLLM:
     def get_completion(self, user: str, system: str = None, history: list = None, **kwargs) -> dict:
         messages = self.text_message(user=user, system=system, history=history)
         response = self.get_response(messages=messages, **kwargs)
+        return self.parse_response(response)
+
+    async def get_completion_async(self, user: str, system: str = None, history: list = None, **kwargs) -> dict:
+        """异步版本的get_completion函数"""
+        messages = self.text_message(user=user, system=system, history=history)
+        response = await self.get_response_async(messages=messages, **kwargs)
         return self.parse_response(response)
     
     @measure_time_and_speed
